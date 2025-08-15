@@ -2148,7 +2148,8 @@ havoc_stage:
 
   // + (afl->extras_cnt ? 2 : 0) + (afl->a_extras_cnt ? 2 : 0);
 
-  for (afl->stage_cur = 0; afl->stage_cur < afl->stage_max; ++afl->stage_cur) {
+  // Do havoc only once.
+  // for (afl->stage_cur = 0; afl->stage_cur < afl->stage_max; ++afl->stage_cur) {
 
     u32 use_stacking = 1 + rand_below(afl, stack_max);
 
@@ -3281,7 +3282,12 @@ havoc_stage:
 
     }
 
-    if (common_fuzz_stuff(afl, out_buf, temp_len)) { goto abandon_entry; }
+    afl->record_sampling = true;
+    if (common_fuzz_stuff(afl, out_buf, temp_len)) {
+      afl->record_sampling = false;
+      goto abandon_entry;
+    }
+    afl->record_sampling = false;
 
     /* out_buf might have been mangled a bit, so let's restore it to its
        original size and shape. */
@@ -3307,7 +3313,7 @@ havoc_stage:
 
     }
 
-  }
+  // }
 
   new_hit_cnt = afl->queued_items + afl->saved_crashes;
 

@@ -407,6 +407,17 @@ struct custom_mutator *load_custom_mutator(afl_state_t *afl, const char *fn) {
 
     OKF("Found 'afl_custom_post_run'.");
 
+    mutator->afl_custom_end_job = dlsym(dh, "afl_custom_end_job");
+    if (!mutator->afl_custom_end_job) {
+
+      ACTF("optional symbol 'afl_custom_end_job' not found.");
+
+    } else {
+
+      OKF("Found 'afl_custom_end_job'.");
+
+    }
+
   }
 
   /* "afl_custom_queue_new_entry", optional */
