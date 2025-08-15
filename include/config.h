@@ -547,7 +547,7 @@ We add 4 byte for one u32 length field. */
    but do not use them as seeds for fuzzing. This is useful for conveniently
    measuring coverage that could be attained by a "dumb" fuzzing algorithm: */
 
-// #define IGNORE_FINDS
+#define IGNORE_FINDS
 
 /* Text mutations */
 

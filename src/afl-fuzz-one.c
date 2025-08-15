@@ -320,6 +320,16 @@ static void locate_diffs(u8 *ptr1, u8 *ptr2, u32 len, s32 *first, s32 *last) {
 
 #endif                                                     /* !IGNORE_FINDS */
 
+/* 공유 메모리 초기화 | check shm.h */
+void empty_shm(afl_state_t *afl) {
+  if (afl->ptr_shm == NULL) {
+    fprintf(stderr, "❌ Shared memory not initialized\n");
+    return;
+  }
+  size_t bytes = afl->llvm_bb_map_size * sizeof(int64_t); // double-check shm.h
+  memset(afl->ptr_shm, 0, bytes);
+}
+
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
    skipped or bailed out. */
@@ -2148,7 +2158,8 @@ havoc_stage:
 
   // + (afl->extras_cnt ? 2 : 0) + (afl->a_extras_cnt ? 2 : 0);
 
-  for (afl->stage_cur = 0; afl->stage_cur < afl->stage_max; ++afl->stage_cur) {
+  // Do havoc only once.
+  // for (afl->stage_cur = 0; afl->stage_cur < afl->stage_max; ++afl->stage_cur) {
 
     u32 use_stacking = 1 + rand_below(afl, stack_max);
 
@@ -3280,8 +3291,13 @@ havoc_stage:
     }
 
     }
-
-    if (common_fuzz_stuff(afl, out_buf, temp_len)) { goto abandon_entry; }
+    empty_shm(afl);
+    afl->record_sampling = true;
+    if (common_fuzz_stuff(afl, out_buf, temp_len)) {
+      afl->record_sampling = false;
+      goto abandon_entry;
+    }
+    afl->record_sampling = false;
 
     /* out_buf might have been mangled a bit, so let's restore it to its
        original size and shape. */
@@ -3307,7 +3323,7 @@ havoc_stage:
 
     }
 
-  }
+  // }
 
   new_hit_cnt = afl->queued_items + afl->saved_crashes;
 

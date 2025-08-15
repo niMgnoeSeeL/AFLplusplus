@@ -678,7 +678,30 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
        future fuzzing, etc. */
     calculate_new_bits_if_necessary(afl, &new_bits, &bits_counted, &classified);
 
-    if (likely(!new_bits)) {
+#ifdef IGNORE_FINDS
+    /* If IGNORE_FINDS is defined, i.e., we want to run AFL++ blackbox mode,
+       we don't want to add any new findings to the queue.
+       We still want to update the time, so we can see how long it took to find 
+       the last new coverage.
+    */
+    bool ignore_finds = true;
+    if (unlikely(new_bits)) {
+      // copied from add_to_queue.c
+      u64 cur_time = get_cur_time();
+      if (likely(afl->start_time) &&
+            unlikely(afl->longest_find_time < cur_time - afl->last_find_time)) {
+            if (unlikely(!afl->last_find_time)) {
+              afl->longest_find_time = cur_time - afl->start_time;
+            } else {
+              afl->longest_find_time = cur_time - afl->last_find_time;
+            }
+      }
+      afl->last_find_time = cur_time;
+    }
+#else 
+    bool ignore_finds = false;
+#endif
+    if (likely(!new_bits) || ignore_finds) {
 
       if (san_fault == FSRV_RUN_OK) {
 
