@@ -46,9 +46,9 @@ typedef struct record {
 #endif
 
   // for ground truth computation
-  SimpleSet             *covered;
-  long long unsigned int n_found_new;
-  bool                   check_new;
+  // SimpleSet             *covered;
+  // long long unsigned int n_found_new;
+  // bool                   check_new;
 
   // was it recorded because there was a change in the singleton set?
   bool is_update;
@@ -139,7 +139,7 @@ covmanager_t *covmanager_init(void) {
 u32 compute_record_memory(record_t *record) {
   u32 size = 0;
   size += sizeof(record_t);
-  size += set_memory(record->covered);
+  // size += set_memory(record->covered);
   return size;
 }
 
@@ -191,18 +191,6 @@ void destroy_covmanager(covmanager_t *covman) {
   set_destroy(covman->singletons);
   free(covman);
 }
-
-// // iterate over the queue and find the queue_entry_t with the given id
-// queue_entry_t *get_queue_entry(afl_state_t *afl, u32 id)
-// {
-//   queue_entry_t *q = afl->queue_buf[id];
-//   // assert q->id == id
-//   if (q->id != id)
-//   {
-//     FATAL("Error: queue_entry_t id does not match the given id");
-//   }
-//   return q;
-// }
 
 #ifndef IGNORE_FINDS
 covmanager_t *get_covmanager(item2manager_t *item2man, u32 id) {
@@ -563,29 +551,29 @@ void afl_custom_post_run(my_mutator_t *data) {
 
   // flag up the check_new for all records. this recording for the missing mass
   // analysis only done until the number of executions is doubled.
-  record_t *cur = data->records;
-  while (cur && cur->execs * 2 >= data->covman_total->n_execs) {
-    cur->check_new = true;
-    cur = cur->prev;
-  }
+  // record_t *cur = data->records;
+  // while (cur && cur->execs * 2 >= data->covman_total->n_execs) {
+  //   cur->check_new = true;
+  //   cur = cur->prev;
+  // }
 
   debug_time_prev = get_cur_time();
-  record_t *stop_record = cur;
+  // record_t *stop_record = cur;
   for (i = 0; i < data->afl->fsrv.map_size; i++) {
     // if the trace bit is nonzero, then this has been covered in this run
     if (data->afl->fsrv.trace_bits[i]) {
       const char *key = idx_to_str(i);
       // iterate over the records and update n_found_new
-      record_t *cur = data->records;
-      while (cur) {
-        if (cur == stop_record) { break; }
-        // if covered_curr has unseen keys in cur->covered, +1 to n_found_new
-        if (cur->check_new && set_contains(cur->covered, key) == SET_FALSE) {
-          cur->n_found_new++;
-          cur->check_new = false;
-        }
-        cur = cur->prev;
-      }
+      // record_t *cur = data->records;
+      // while (cur) {
+      //   if (cur == stop_record) { break; }
+      //   // if covered_curr has unseen keys in cur->covered, +1 to n_found_new
+      //   if (cur->check_new && set_contains(cur->covered, key) == SET_FALSE) {
+      //     cur->n_found_new++;
+      //     cur->check_new = false;
+      //   }
+      //   cur = cur->prev;
+      // }
 
       // update covmanager:
       // if the key was not in covered_prev, add it as a new singleton
@@ -633,7 +621,6 @@ void afl_custom_post_run(my_mutator_t *data) {
     new_record->n_covered_total = set_length(data->covman_total->covered_prev);
     new_record->n_sglt_clusts_total = data->covman_total->n_sglt_clusts;
     new_record->n_singletons_total = set_length(data->covman_total->singletons);
-
 #ifndef IGNORE_FINDS
     new_record->n_covered_reset = set_length(data->covman_reset->covered_prev);
     new_record->n_sglt_clusts_reset = data->covman_reset->n_sglt_clusts;
@@ -671,9 +658,8 @@ void afl_custom_post_run(my_mutator_t *data) {
                 data->covman_total->covered_prev->nodes[i]->_key);
       }
     }
-    new_record->covered = covered_so_far;
-
-    new_record->n_found_new = 0;
+    // new_record->covered = covered_so_far;
+    // new_record->n_found_new = 0;
     // new_record->is_update = add_new_record;
     new_record->prev = data->records;
     new_record->next = NULL;
@@ -738,7 +724,7 @@ void write_header(FILE *f, bool for_done_records) {
   fprintf(f,
           "time, #execs, #seeds, "
           "#covered, #singletons, #sglt_clusts, "
-          "#foundnew, done");
+          "estimate");
 #else
   fprintf(f,
           "time, #execs, #seeds, #items, "
@@ -763,10 +749,10 @@ void write_row(FILE *f, my_mutator_t *data, record_t *cur,
   fprintf(f,
           "%llu, %llu, %u, "
           "%lu, %lu, %lu, "
-          "%llu, %s",
+          "%e",
           cur->time_ms, cur->execs, cur->n_seeds, cur->n_covered_total,
-          cur->n_singletons_total, cur->n_sglt_clusts_total, cur->n_found_new,
-          cur->execs * 2 < data->covman_total->n_execs ? "true" : "false");
+          cur->n_singletons_total, cur->n_sglt_clusts_total,
+          cur->n_sglt_clusts_total / (float)(cur->execs));
 #else
   fprintf(f,
           "%llu, %llu, %u, %u, "
@@ -810,46 +796,53 @@ void update_record(my_mutator_t *data, bool is_end) {
     write_header(f, true);
   }
   record_t *cur = data->records;
+  if (!cur) {
+    // no records to update
+    fclose(f);
+    return;
+  }
   // find the first record
   while (cur && cur->prev) {
     cur = cur->prev;
   }
   while (cur) {
     // check if the record is done
-    if (cur->execs * 2 >= data->covman_total->n_execs) { break; }
+    // if (cur->execs * 2 >= data->covman_total->n_execs) { break; }
     // write the record to the file
     write_row(f, data, cur, true);
-    cur = cur->next;
-    // remove the record
-    if (cur) {
-      free(cur->prev->covered);
+    if (cur->next) {
+      cur = cur->next;
       free(cur->prev);
+      cur->prev = NULL;
+      data->records_len--;
+    } else {
+      if (data->records_len != 1) { FATAL("Error: data->records_len != 1"); }
+      free(cur);
+      cur = NULL;
+      data->records = NULL;
+      data->records_len = 0;
     }
-    cur->prev = NULL;
-    data->records_len--;
   }
   fclose(f);
-
   // write not done records to a file if it is the end
-  if (is_end) {
-    char *filename_not_done =
-        (char *)alloc_printf("%s/records_not_done.csv", data->afl->out_dir);
-    FILE *f_not_done = fopen(filename_not_done, "w");
-    if (!f_not_done) {
-      perror("fopen");
-      return;
-    }
-    // write the header
-    write_header(f_not_done, false);
-    while (cur) {
-      // write the record to the file
-      write_row(f_not_done, data, cur, false);
-      cur = cur->next;
-    }
-    fclose(f_not_done);
-    ck_free(filename_not_done);
-  }
-
+  // if (is_end) {
+  //   char *filename_not_done =
+  //       (char *)alloc_printf("%s/records_not_done.csv", data->afl->out_dir);
+  //   FILE *f_not_done = fopen(filename_not_done, "w");
+  //   if (!f_not_done) {
+  //     perror("fopen");
+  //     return;
+  //   }
+  //   // write the header
+  //   write_header(f_not_done, false);
+  //   while (cur) {
+  //     // write the record to the file
+  //     write_row(f_not_done, data, cur, false);
+  //     cur = cur->next;
+  //   }
+  //   fclose(f_not_done);
+  //   ck_free(filename_not_done);
+  // }
   ck_free(filename);
 
   data->last_record_write_time = get_cur_time();
@@ -880,7 +873,7 @@ void afl_custom_deinit(my_mutator_t *data) {
   while (cur) {
     record_t *tmp = cur;
     cur = cur->next;
-    set_destroy(tmp->covered);
+    // set_destroy(tmp->covered);
     free(tmp);
   }
   destroy_covmanager(data->covman_total);
