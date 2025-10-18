@@ -1427,76 +1427,76 @@ void perform_dry_run(afl_state_t *afl) {
 
   /* Now we remove all entries from the queue that have a duplicate trace map */
 
-  u32 duplicates = 0, i;
+  // u32 duplicates = 0, i;
 
-  for (idx = 0; idx < afl->queued_items - 1; idx++) {
+  // for (idx = 0; idx < afl->queued_items - 1; idx++) {
 
-    q = afl->queue_buf[idx];
-    if (!q || q->disabled || q->cal_failed || !q->exec_cksum) { continue; }
+  //   q = afl->queue_buf[idx];
+  //   if (!q || q->disabled || q->cal_failed || !q->exec_cksum) { continue; }
 
-    for (i = idx + 1; likely(i < afl->queued_items && afl->queue_buf[i]); ++i) {
+  //   for (i = idx + 1; likely(i < afl->queued_items && afl->queue_buf[i]); ++i) {
 
-      struct queue_entry *p = afl->queue_buf[i];
-      if (p->disabled || p->cal_failed || !p->exec_cksum) { continue; }
-      if (p->exec_cksum != q->exec_cksum) continue;
+  //     struct queue_entry *p = afl->queue_buf[i];
+  //     if (p->disabled || p->cal_failed || !p->exec_cksum) { continue; }
+  //     if (p->exec_cksum != q->exec_cksum) continue;
 
-      duplicates = 1;
+  //     duplicates = 1;
 
-      // we keep the shorter file
-      struct queue_entry *to_disable, *to_keep;
-      if (p->len >= q->len) {
+  //     // we keep the shorter file
+  //     struct queue_entry *to_disable, *to_keep;
+  //     if (p->len >= q->len) {
 
-        to_disable = p;
-        to_keep = q;
+  //       to_disable = p;
+  //       to_keep = q;
 
-      } else {
+  //     } else {
 
-        to_disable = q;
-        to_keep = p;
+  //       to_disable = q;
+  //       to_keep = p;
 
-      }
+  //     }
 
-      if (!to_disable->was_fuzzed) {
+  //     if (!to_disable->was_fuzzed) {
 
-        to_disable->was_fuzzed = 1;
-        afl->reinit_table = 1;
-        --afl->pending_not_fuzzed;
-        --afl->active_items;
+  //       to_disable->was_fuzzed = 1;
+  //       afl->reinit_table = 1;
+  //       --afl->pending_not_fuzzed;
+  //       --afl->active_items;
 
-      }
+  //     }
 
-      to_disable->disabled = 1;
-      to_disable->perf_score = 0;
+  //     to_disable->disabled = 1;
+  //     to_disable->perf_score = 0;
 
-      if (afl->debug) {
+  //     if (afl->debug) {
 
-        WARNF("Same coverage - %s is kept active, %s is disabled.",
-              to_keep->fname, to_disable->fname);
+  //       WARNF("Same coverage - %s is kept active, %s is disabled.",
+  //             to_keep->fname, to_disable->fname);
 
-      }
+  //     }
 
-      // end inner loop because outer loop entry is disabled now
-      if (to_disable == q) break;
+  //     // end inner loop because outer loop entry is disabled now
+  //     if (to_disable == q) break;
 
-    }
+  //   }
 
-  }
+  // }
 
-  if (duplicates) {
+  // if (duplicates) {
 
-    afl->max_depth = 0;
+  //   afl->max_depth = 0;
 
-    for (idx = 0; idx < afl->queued_items; idx++) {
+  //   for (idx = 0; idx < afl->queued_items; idx++) {
 
-      if (afl->queue_buf[idx] && !afl->queue_buf[idx]->disabled &&
-          afl->queue_buf[idx]->depth > afl->max_depth)
-        afl->max_depth = afl->queue_buf[idx]->depth;
+  //     if (afl->queue_buf[idx] && !afl->queue_buf[idx]->disabled &&
+  //         afl->queue_buf[idx]->depth > afl->max_depth)
+  //       afl->max_depth = afl->queue_buf[idx]->depth;
 
-    }
+  //   }
 
-    afl->queue_top = afl->queue;
+  //   afl->queue_top = afl->queue;
 
-  }
+  // }
 
   OKF("All test cases processed.");
 
