@@ -147,6 +147,9 @@ void afl_state_init(afl_state_t *afl, uint32_t map_size) {
   list_append(&afl_states, afl);
 
   afl->record_sampling = false;
+  afl->sample_interval = 0; // default residual risk calculation interval
+                            // 0: per execution
+                            // >0: every N seconds
 }
 
 void afl_resize_map_buffers(afl_state_t *afl, u32 old_size, u32 new_size) {

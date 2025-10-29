@@ -670,9 +670,31 @@ int main(int argc, char **argv_orig, char **envp) {
   while (
       (opt = getopt(argc, argv,
                     "+a:Ab:B:c:CdDe:E:f:F:g:G:hi:I:l:L:m:M:nNo:Op:P:QRs:S:t:T:"
-                    "uUV:w:WXx:YzZ")) > 0) {
+                    "uUV:v:w:WXx:YzZ")) > 0) {
 
     switch (opt) {
+      printf("DEBUG::opt: %c\n", opt);
+      case 'v': // default residual risk calculation interval
+                // 0: per execution
+                // >0: every n seconds
+        // afl->afl_env.afl_custom_mutator_library must be set
+        if (!afl->afl_env.afl_custom_mutator_library) {
+          FATAL("Option -v requires AFL_CUSTOM_MUTATOR_LIBRARY to be set.");
+        }
+        afl->sample_interval = atoi(optarg);
+        if (afl->sample_interval < 0) {
+          FATAL(
+            "Option -v must be >= 0; 0: per execution sampling, >0: every n seconds; got %d", 
+            afl->sample_interval
+          );
+        } else if (afl->sample_interval > 0) {
+          ACTF("Setting residual risk calculation interval to %d seconds.", 
+            afl->sample_interval
+          );
+        } else {
+          ACTF("Setting residual risk calculation interval to per execution.");
+        }
+        break;
 
       case 'a':
 

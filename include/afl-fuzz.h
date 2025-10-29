@@ -888,6 +888,7 @@ typedef struct afl_state {
 #endif
 
   bool record_sampling;
+  u32  sample_interval; // default residual risk calculation interval
 
 } afl_state_t;
 
