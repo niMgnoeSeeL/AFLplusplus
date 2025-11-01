@@ -646,13 +646,10 @@ PreservedAnalyses AFLCoverage::run(Module &M, ModuleAnalysisManager &MAM) {
       if (ngram_size)
         MapPtrIdx = IRB.CreateGEP(
             Int8Ty, MapPtr,
-            IRB.CreateZExt(
-                IRB.CreateXor(PrevLocTrans, IRB.CreateZExt(CurLoc, Int32Ty)),
-                Int32Ty));
+            IRB.CreateZExt(CurLoc, IRB.getInt32Ty()));
       else
 #endif
-        MapPtrIdx =
-            IRB.CreateGEP(Int8Ty, MapPtr, IRB.CreateXor(PrevLocTrans, CurLoc));
+        MapPtrIdx = IRB.CreateGEP(Int8Ty, MapPtr, CurLoc);
 
       /* Update bitmap */
 
