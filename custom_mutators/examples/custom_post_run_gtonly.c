@@ -47,7 +47,8 @@ typedef struct record {
 #endif
 
   // for ground truth computation
-  SimpleSet             *covered;
+  long unsigned int        cov_per_sample;
+  SimpleSet             *covered_cum;
   long long unsigned int n_found_new;
   bool                   check_new;
 
@@ -69,6 +70,7 @@ typedef struct covmanager {
   SimpleSet  *covered_prev;
 
   SimpleSet  *curr_covered; // used during ground truth computation
+  long unsigned int cov_per_sample;
 } covmanager_t;
 
 // queue_entry is defined in afl-fuzz.h
@@ -138,7 +140,7 @@ covmanager_t *covmanager_init(void) {
 u32 compute_record_memory(record_t *record) {
   u32 size = 0;
   size += sizeof(record_t);
-  size += set_memory(record->covered);
+  size += set_memory(record->covered_cum);
   return size;
 }
 
@@ -298,7 +300,7 @@ void update_singleton_clusters(covmanager_t *covman,
       if (iter_record == stop_record) { break; }
       if (iter_record->check_new && 
           set_is_subset(covman->curr_covered,
-                        iter_record->covered) == SET_FALSE) {
+                        iter_record->covered_cum) == SET_FALSE) {
           iter_record->n_found_new++;
           iter_record->check_new = false;
       }
@@ -312,6 +314,7 @@ void update_singleton_clusters(covmanager_t *covman,
     }
   }
   // reset covman->curr_covered for the next sampling period
+  covman->cov_per_sample = set_length(covman->curr_covered);
   set_destroy(covman->curr_covered);
   covman->curr_covered = NULL;
 }
@@ -601,8 +604,9 @@ void afl_custom_post_run(my_mutator_t *data) {
                 data->covman_total->covered_prev->nodes[i]->_key);
       }
     }
-    new_record->covered = covered_so_far;
+    new_record->covered_cum = covered_so_far;
     new_record->n_found_new = 0;
+    new_record->cov_per_sample = data->covman_total->cov_per_sample;
 
     new_record->prev = data->records;
     new_record->next = NULL;
@@ -669,11 +673,11 @@ void write_header(FILE *f, bool for_done_records) {
   // header for the records file
 #ifdef IGNORE_FINDS
   fprintf(f,
-          "time, #samples, #execs, #seeds, "
+          "time, #samples, #covpersmp, #execs, #seeds, "
           "#covered, #foundnew, empirical, done");
 #else
   fprintf(f,
-          "time, #samples, #execs, #seeds, #items, "
+          "time, #samples, #covpersmp, #execs, #seeds, #items, "
           "#covered, #singletons, #sglt_clusts, "
           "#coveredR, #singletonsR, #sglt_clustsR, "
           "ML_sglt, ML_sglt_clusts, "
@@ -693,21 +697,23 @@ void write_row(FILE *f, my_mutator_t *data, record_t *cur,
   // write a row to the records file
 #ifdef IGNORE_FINDS
   fprintf(f,
-          "%llu, %llu, %llu, %u, "
+          "%llu, %llu, %lu, %llu, %u, "
           "%lu, %llu, %e, %s",
-          cur->time_ms, cur->samples, cur->execs, cur->n_seeds, cur->n_covered_total,
+          cur->time_ms, cur->samples, cur->cov_per_sample, cur->execs, 
+          cur->n_seeds, cur->n_covered_total,
           cur->n_found_new,
           cur->n_found_new / (float)(cur->samples),
           cur->execs * 2 < data->covman_total->n_execs ? "true" : "false");
 #else
   fprintf(f,
-          "%llu, %llu, %llu, %u, %u, "
+          "%llu, %llu, %lu, %llu, %u, %u, "
           "%lu, %lu, %lu, "
           "%lu, %lu, %lu, "
           "%f, %f, "
           "%f, %f, %f, %u, %f, %u, "
           "%llu, %s",
-          cur->time_ms, cur->samples, cur->execs, cur->n_seeds, cur->n_items,
+          cur->time_ms, cur->samples, cur->cov_per_sample, cur->execs, 
+          cur->n_seeds, cur->n_items,
           cur->n_covered_total, cur->n_singletons_total,
           cur->n_sglt_clusts_total, cur->n_covered_reset,
           cur->n_singletons_reset, cur->n_sglt_clusts_reset, cur->n_ml_sglt,
