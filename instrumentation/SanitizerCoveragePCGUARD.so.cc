@@ -570,8 +570,9 @@ static bool shouldInstrumentBlock(const Function &F, const BasicBlock *BB,
 
   // Do not instrument full dominators, or full post-dominators with multiple
   // predecessors.
-  return !isFullDominator(BB, DT) &&
-         !(isFullPostDominator(BB, PDT) && !BB->getSinglePredecessor());
+  // return !isFullDominator(BB, DT) &&
+  //        !(isFullPostDominator(BB, PDT) && !BB->getSinglePredecessor());
+  return true;
 
 }
 
