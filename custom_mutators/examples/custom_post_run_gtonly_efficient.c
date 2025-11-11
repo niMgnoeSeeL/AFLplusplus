@@ -47,7 +47,7 @@ typedef struct record {
 #endif
 
   // for ground truth computation
-  long unsigned int        cov_per_sample;
+  long unsigned int        cov_per_sample, cov_per_sample_unique;
   SimpleSet             *covered_cum;
   long long unsigned int n_found_new;
   bool                   check_new;
@@ -70,7 +70,8 @@ typedef struct covmanager {
   SimpleSet  *covered_prev;
 
   SimpleSet  *curr_covered; // used during ground truth computation
-  long unsigned int cov_per_sample;
+  long unsigned int        cov_per_sample_unique;
+  long unsigned int        cov_per_sample_store, cov_per_sample_live;
 } covmanager_t;
 
 // queue_entry is defined in afl-fuzz.h
@@ -136,6 +137,9 @@ covmanager_t *covmanager_init(void) {
   covman->covered_prev = (SimpleSet *)malloc(sizeof(SimpleSet));
   set_init(covman->covered_prev);
   covman->curr_covered = NULL;
+  covman->cov_per_sample_unique = 0;
+  covman->cov_per_sample_store = 0;
+  covman->cov_per_sample_live = 0;
   return covman;
 }
 
@@ -318,7 +322,9 @@ void update_singleton_clusters(covmanager_t *covman,
     }
   }
   // reset covman->curr_covered for the next sampling period
-  covman->cov_per_sample = set_length(covman->curr_covered);
+  covman->cov_per_sample_unique = set_length(covman->curr_covered);
+  covman->cov_per_sample_store = covman->cov_per_sample_live;
+  covman->cov_per_sample_live = 0;
   set_destroy(covman->curr_covered);
   covman->curr_covered = NULL;
 }
@@ -519,6 +525,7 @@ void afl_custom_post_run(my_mutator_t *data) {
       is_update = update_covmanager(data->covman_reset, key) || is_update;
       is_update = update_covmanager(covman_curr, key) || is_update;
 #endif
+      data->covman_total->cov_per_sample_live += data->afl->fsrv.trace_bits[i];
     }
   }
   // if per execution sampling, or per interval sampling and the sampling
@@ -558,7 +565,7 @@ void afl_custom_post_run(my_mutator_t *data) {
         (!data->records) || (time_so_far * 100 >= data->records->time_ms * 105);
   }
   // restrict the number of records for efficiency
-  if (data->records_len >= 10) {
+  if (data->records_len >= 10 && add_new_record) {
     add_new_record = false;
   }
 
@@ -615,7 +622,10 @@ void afl_custom_post_run(my_mutator_t *data) {
     }
     new_record->covered_cum = covered_so_far;
     new_record->n_found_new = 0;
-    new_record->cov_per_sample = data->covman_total->cov_per_sample;
+    new_record->cov_per_sample_unique = \
+      data->covman_total->cov_per_sample_unique;
+    new_record->cov_per_sample = data->covman_total->cov_per_sample_store;
+    data->covman_total->cov_per_sample_store = 0;
 
     new_record->prev = data->records;
     new_record->next = NULL;
@@ -683,11 +693,11 @@ void write_header(FILE *f, bool for_done_records) {
   // header for the records file
 #ifdef IGNORE_FINDS
   fprintf(f,
-          "time,#samples,#covpersmp,#execs,#seeds,"
+          "time,#samples,#covpersmp,#covperuniqsmp,#execs,#seeds,"
           "#covered,#foundnew,empirical,done");
 #else
   fprintf(f,
-          "time,#samples,#covpersmp,#execs,#seeds,#items,"
+          "time,#samples,#covpersmp,#covperuniqsmp,#execs,#seeds,#items,"
           "#covered,#singletons,#sglt_clusts,"
           "#coveredR,#singletonsR,#sglt_clustsR,"
           "ML_sglt,ML_sglt_clusts,"
@@ -707,9 +717,10 @@ void write_row(FILE *f, my_mutator_t *data, record_t *cur,
   // write a row to the records file
 #ifdef IGNORE_FINDS
   fprintf(f,
-          "%llu,%llu,%lu,%llu,%u,"
+          "%llu,%llu,%lu,%lu,%llu,%u,"
           "%lu,%llu,%e,%s",
-          cur->time_ms, cur->samples, cur->cov_per_sample, cur->execs, 
+          cur->time_ms, cur->samples, cur->cov_per_sample, 
+          cur->cov_per_sample_unique, cur->execs, 
           cur->n_seeds, cur->n_covered_total,
           cur->n_found_new,
           cur->n_found_new / (float)(cur->samples),
