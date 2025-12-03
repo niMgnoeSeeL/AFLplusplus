@@ -96,7 +96,14 @@ typedef struct my_mutator {
   item2manager_t *item2man;
 #endif
 
-  u64       last_sglt_clust_update_time;  // last time we updated singleton clusters
+  u64       last_sglt_clust_update_time;  // last time we updated singleton
+                                          // clusters. Singleton clusters may be
+                                          // updated more frequently than
+                                          // records are added, as record
+                                          // addition has additional logic to
+                                          // avoid excessive data collection,
+                                          // when there no sample interval is
+                                          // set (sample_interval == 0).
 
   record_t *records;
   u32       records_len;

@@ -98,6 +98,14 @@ typedef struct my_mutator {
   item2manager_t *item2man;
 #endif
 
+  u64       last_sglt_clust_update_time;  // last time we updated singleton
+                                          // clusters. Singleton clusters may be
+                                          // updated more frequently than
+                                          // records are added, as record
+                                          // addition has additional logic to
+                                          // avoid excessive data collection,
+                                          // when there no sample interval is
+                                          // set (sample_interval == 0).
   record_t *records;
   u32       records_len;
   u64       last_record_add_time; // last time we added a new record
@@ -147,7 +155,6 @@ covmanager_t *covmanager_init(void) {
 u32 compute_record_memory(record_t *record) {
   u32 size = 0;
   size += sizeof(record_t);
-  // size += set_memory(record->covered);
   return size;
 }
 
@@ -300,6 +307,7 @@ void reset_entire_data(my_mutator_t *data) {
   data->records = NULL;
   data->records_len = 0;
   data->force_save = false;
+  data->last_sglt_clust_update_time = get_cur_time();
   data->last_record_add_time = get_cur_time();
   data->last_record_write_time = get_cur_time();
 }
@@ -593,18 +601,6 @@ void afl_custom_post_run(my_mutator_t *data) {
     // if the trace bit is nonzero, then this has been covered in this run
     if (data->afl->fsrv.trace_bits[i]) {
       const char *key = idx_to_str(i);
-      // iterate over the records and update n_found_new
-      // record_t *cur = data->records;
-      // while (cur) {
-      //   if (cur == stop_record) { break; }
-      //   // if covered_curr has unseen keys in cur->covered, +1 to n_found_new
-      //   if (cur->check_new && set_contains(cur->covered, key) == SET_FALSE) {
-      //     cur->n_found_new++;
-      //     cur->check_new = false;
-      //   }
-      //   cur = cur->prev;
-      // }
-
       // update covmanager:
       // if the key was not in covered_prev, add it as a new singleton
       // if the key was in singletons, remove it from singletons
@@ -618,13 +614,14 @@ void afl_custom_post_run(my_mutator_t *data) {
   // if per execution sampling, or per interval sampling and the sampling
   // interval came, update singleton clusters
   if (data->afl->sample_interval == 0 || (
-        get_cur_time() - data->last_record_add_time >=
+        get_cur_time() - data->last_sglt_clust_update_time >=
         data->afl->sample_interval * 1000)) {
     update_singleton_clusters(data->covman_total);
 #ifndef IGNORE_FINDS
     update_singleton_clusters(data->covman_reset);
     update_singleton_clusters(covman_curr);
 #endif
+    data->last_sglt_clust_update_time = get_cur_time();
   }
 
   // add_new_record: determine whether to add a new record object
@@ -751,21 +748,21 @@ void write_header(FILE *f, bool for_done_records) {
   // header for the records file
 #ifdef IGNORE_FINDS
   fprintf(f,
-          "time, #samples, #execs, #seeds, "
-          "#covered, #singletons, #sglt_clusts, "
+          "time,#samples,#execs,#seeds,"
+          "#covered,#singletons,#sglt_clusts,"
           "estimate");
 #else
   fprintf(f,
-          "time, #samples, #execs, #seeds, #items, "
-          "#covered, #singletons, #sglt_clusts, "
-          "#coveredR, #singletonsR, #sglt_clustsR, "
-          "ML_sglt, ML_sglt_clusts, "
-          "remainW, lesti_mean, lesti_min, lesti_min_id, lesti_max, "
-          "lesti_max_id, "
-          "#foundnew, done");
+          "time,#samples,#execs,#seeds,#items,"
+          "#covered,#singletons,#sglt_clusts,"
+          "#coveredR,#singletonsR,#sglt_clustsR,"
+          "ML_sglt,ML_sglt_clusts,"
+          "remainW,lesti_mean,lesti_min,lesti_min_id,lesti_max,"
+          "lesti_max_id,"
+          "#foundnew,done");
 #endif
   if (for_done_records) {
-    fprintf(f, ", update?\n");
+    fprintf(f, ",update?\n");
   } else {
     fprintf(f, "\n");
   }
@@ -776,20 +773,20 @@ void write_row(FILE *f, my_mutator_t *data, record_t *cur,
   // write a row to the records file
 #ifdef IGNORE_FINDS
   fprintf(f,
-          "%llu, %llu, %llu, %u, "
-          "%lu, %lu, %lu, "
+          "%llu,%llu,%llu,%u,"
+          "%lu,%lu,%lu,"
           "%e",
           cur->time_ms, cur->samples, cur->execs, cur->n_seeds, cur->n_covered_total,
           cur->n_singletons_total, cur->n_sglt_clusts_total,
           cur->n_sglt_clusts_total / (float)(cur->samples));
 #else
   fprintf(f,
-          "%llu, %llu, %llu, %u, %u, "
-          "%lu, %lu, %lu, "
-          "%lu, %lu, %lu, "
-          "%f, %f, "
-          "%f, %f, %f, %u, %f, %u, "
-          "%llu, %s",
+          "%llu,%llu,%llu,%u,%u,"
+          "%lu,%lu,%lu,"
+          "%lu,%lu,%lu,"
+          "%f,%f,"
+          "%f,%f,%f,%u,%f,%u,"
+          "%llu,%s",
           cur->time_ms, cur->samples, cur->execs, cur->n_seeds, cur->n_items,
           cur->n_covered_total, cur->n_singletons_total,
           cur->n_sglt_clusts_total, cur->n_covered_reset,
@@ -800,7 +797,7 @@ void write_row(FILE *f, my_mutator_t *data, record_t *cur,
           cur->samples * 2 < data->covman_total->n_samples ? "true" : "false");
 #endif
   if (for_done_records) {
-    fprintf(f, ", %s\n", cur->is_update ? "true" : "false");
+    fprintf(f, ",%s\n", cur->is_update ? "true" : "false");
   } else {
     fprintf(f, "\n");
   }
