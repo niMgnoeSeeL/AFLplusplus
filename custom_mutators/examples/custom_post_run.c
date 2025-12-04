@@ -268,10 +268,16 @@ my_mutator_t *afl_custom_init(afl_state_t *afl, unsigned int seed) {
   data->records = NULL;
   data->records_len = 0;
   data->force_save = false;
+  data->last_sglt_clust_update_time = get_cur_time();
   data->last_record_add_time = get_cur_time();
-  data->reset_after_tmin = true;
-  data->tmin = 0;
   data->last_record_write_time = get_cur_time();
+
+  data->reset_after_tmin = false;
+  data->tmin = 0;
+  if (afl->tmin > 0) {
+    data->reset_after_tmin = true;
+    data->tmin = afl->tmin;
+  }
 
   // check if the records file exists; if so, remove it
   char *filename = (char *)alloc_printf("%s/records.csv", afl->out_dir);
@@ -285,6 +291,8 @@ my_mutator_t *afl_custom_init(afl_state_t *afl, unsigned int seed) {
 
   return data;
 }
+
+void reset_record_file(my_mutator_t *data);
 
 void reset_entire_data(my_mutator_t *data) {
   destroy_covmanager(data->covman_total);
@@ -309,6 +317,7 @@ void reset_entire_data(my_mutator_t *data) {
   data->force_save = false;
   data->last_sglt_clust_update_time = get_cur_time();
   data->last_record_add_time = get_cur_time();
+  reset_record_file(data);
   data->last_record_write_time = get_cur_time();
 }
 
@@ -533,7 +542,7 @@ void update_record(my_mutator_t *data, bool is_end);
 
 void afl_custom_post_run(my_mutator_t *data) {
   if (data->reset_after_tmin &&
-      get_cur_time() - data->afl->start_time > data->tmin) {
+      get_cur_time() - data->afl->start_time > data->tmin * 60 * 1000) {
     reset_entire_data(data);
     data->reset_after_tmin = false;
   }
@@ -646,7 +655,8 @@ void afl_custom_post_run(my_mutator_t *data) {
 #endif
   if (add_new_record || data->force_save) {
     record_t *new_record = (record_t *)malloc(sizeof(record_t));
-    new_record->time_ms = get_cur_time() - data->afl->start_time;
+    new_record->time_ms = (
+      get_cur_time() - data->afl->start_time - data->tmin * 60 * 1000);
     if (!data->reset_after_tmin) { new_record->time_ms -= data->tmin; }
     new_record->samples = data->covman_total->n_samples;
     new_record->execs = data->covman_total->n_execs;
@@ -801,6 +811,20 @@ void write_row(FILE *f, my_mutator_t *data, record_t *cur,
   } else {
     fprintf(f, "\n");
   }
+}
+
+void reset_record_file(my_mutator_t *data) {
+  // filename: afl->out_dir/records.csv
+  char *filename = (char *)alloc_printf("%s/records.csv", data->afl->out_dir);
+  FILE *f = fopen(filename, "w");
+  if (!f) {
+    perror("fopen");
+    return;
+  }
+  // write the header
+  write_header(f, true);
+  fclose(f);
+  ck_free(filename);
 }
 
 /* Write records to a file */

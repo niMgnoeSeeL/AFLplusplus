@@ -666,14 +666,29 @@ int main(int argc, char **argv_orig, char **envp) {
 
   afl->shmem_testcase_mode = 1;  // we always try to perform shmem fuzzing
 
-  // still available: HjJkKqrv
+  // still available: HjJkKqr
   while (
       (opt = getopt(argc, argv,
-                    "+a:Ab:B:c:CdDe:E:f:F:g:G:hi:I:l:L:m:M:nNo:Op:P:QRs:S:t:T:"
+                    "+a:Ab:B:c:CdDe:E:f:F:g:G:hi:I:l:L:m:M:nNo:Op:P:Qr:Rs:S:t:T:"
                     "uUV:v:w:WXx:YzZ")) > 0) {
 
     switch (opt) {
-      printf("DEBUG::opt: %c\n", opt);
+      case 'r': // delayed start of residual risk calcuation after n minutes
+        // afl->afl_env.afl_custom_mutator_library must be set
+        if (!afl->afl_env.afl_custom_mutator_library) {
+          FATAL("Option -r requires AFL_CUSTOM_MUTATOR_LIBRARY to be set.");
+        }
+        afl->tmin = atoi(optarg);
+        if (afl->tmin < 0) {
+          FATAL("Option -r must be >= 0; got %d", afl->tmin);
+        } else if (afl->tmin > 0) {
+          ACTF("Delaying residual risk calculation start by %d minutes.",
+            afl->tmin
+          );
+        } else {
+          ACTF("Starting residual risk calculation immediately.");
+        }
+        break;
       case 'v': // default residual risk calculation interval
                 // 0: per execution
                 // >0: every n seconds
