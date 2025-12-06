@@ -312,6 +312,13 @@ void reset_entire_data(my_mutator_t *data) {
   data->item2man->covman_list = NULL;
 #endif
 
+  // Free all existing records
+  record_t *cur = data->records;
+  while (cur) {
+    record_t *tmp = cur;
+    cur = cur->prev;
+    free(tmp);
+  }
   data->records = NULL;
   data->records_len = 0;
   data->force_save = false;
