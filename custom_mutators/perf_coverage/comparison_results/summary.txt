@@ -1,0 +1,157 @@
+=== 15-Minute Fuzzing Comparison Results ===
+Date: 2026-01-29
+
+INSTR Mode (instrumented harness, system libxml2):
+start_time        : 1769660968
+last_update       : 1769661873
+run_time          : 904
+fuzzer_pid        : 364484
+cycles_done       : 5795360
+cycles_wo_finds   : 5795360
+time_wo_finds     : 756
+fuzz_time         : 847
+calibration_time  : 0
+cmplog_time       : 0
+sync_time         : 57
+trim_time         : 0
+execs_done        : 17386100
+execs_per_sec     : 19211.65
+execs_ps_last_min : 19267.41
+corpus_count      : 1
+corpus_favored    : 1
+corpus_found      : 0
+corpus_imported   : 0
+corpus_variable   : 1
+max_depth         : 1
+cur_item          : 0
+pending_favs      : 0
+pending_total     : 0
+stability         : 83.33%
+bitmap_cvg        : 41.38%
+saved_crashes     : 0
+saved_hangs       : 0
+total_tmout       : 3
+last_find         : 1769661116
+last_crash        : 0
+last_hang         : 0
+execs_since_crash : 17386100
+exec_timeout      : 20
+slowest_exec_ms   : 0
+peak_rss_mb       : 0
+cpu_affinity      : 0
+edges_found       : 12
+total_edges       : 29
+var_byte_count    : 2
+havoc_expansion   : 5
+auto_dict_entries : 0
+testcache_size    : 5
+testcache_count   : 1
+testcache_evict   : 0
+afl_banner        : /libxml2-home/libxml2_fuzz_persistent
+afl_version       : ++4.33c
+target_mode       : persistent shmem_testcase deferred 
+command_line      : /aflplusplus/afl-fuzz -i /libxml2-home/seeds -o /tmp/out-15min-instr -V 900 -- /libxml2-home/libxml2_fuzz_persistent
+
+
+NOINSTR Raw Mode (AFL harness, system libxml2, no perf):
+start_time        : 1769661884
+last_update       : 1769662789
+run_time          : 904
+fuzzer_pid        : 366235
+cycles_done       : 3440033
+cycles_wo_finds   : 3440033
+time_wo_finds     : 813
+fuzz_time         : 868
+calibration_time  : 0
+cmplog_time       : 0
+sync_time         : 36
+trim_time         : 0
+execs_done        : 10320113
+execs_per_sec     : 11403.75
+execs_ps_last_min : 11315.10
+corpus_count      : 1
+corpus_favored    : 1
+corpus_found      : 0
+corpus_imported   : 0
+corpus_variable   : 0
+max_depth         : 1
+cur_item          : 0
+pending_favs      : 0
+pending_total     : 0
+stability         : 100.00%
+bitmap_cvg        : 41.94%
+saved_crashes     : 0
+saved_hangs       : 0
+total_tmout       : 0
+last_find         : 1769662703
+last_crash        : 0
+last_hang         : 0
+execs_since_crash : 10320113
+exec_timeout      : 20
+slowest_exec_ms   : 0
+peak_rss_mb       : 0
+cpu_affinity      : -1
+edges_found       : 13
+total_edges       : 31
+var_byte_count    : 0
+havoc_expansion   : 5
+auto_dict_entries : 0
+testcache_size    : 5
+testcache_count   : 1
+testcache_evict   : 0
+afl_banner        : /tmp/libxml2_fuzz_noinstr_persistent
+afl_version       : ++4.33c
+target_mode       : persistent shmem_testcase deferred 
+command_line      : /aflplusplus/afl-fuzz -i /libxml2-home/seeds -o /tmp/out-15min-noinstr-raw -V 900 -- /tmp/libxml2_fuzz_noinstr_persistent
+
+
+NOINSTR+PERF Mode (AFL harness, system libxml2, perf coverage):
+start_time        : 1769662800
+last_update       : 1769663705
+run_time          : 904
+fuzzer_pid        : 367280
+cycles_done       : 2830365
+cycles_wo_finds   : 2830365
+time_wo_finds     : 304
+fuzz_time         : 871
+calibration_time  : 0
+cmplog_time       : 0
+sync_time         : 33
+trim_time         : 0
+execs_done        : 8491115
+execs_per_sec     : 9382.75
+execs_ps_last_min : 9339.88
+corpus_count      : 1
+corpus_favored    : 1
+corpus_found      : 0
+corpus_imported   : 0
+corpus_variable   : 1
+max_depth         : 1
+cur_item          : 0
+pending_favs      : 0
+pending_total     : 0
+stability         : 81.25%
+bitmap_cvg        : 103.23%
+saved_crashes     : 0
+saved_hangs       : 0
+total_tmout       : 0
+last_find         : 1769663636
+last_crash        : 0
+last_hang         : 0
+execs_since_crash : 8491115
+exec_timeout      : 20
+slowest_exec_ms   : 0
+peak_rss_mb       : 0
+cpu_affinity      : -1
+edges_found       : 32
+total_edges       : 31
+var_byte_count    : 6
+havoc_expansion   : 5
+auto_dict_entries : 0
+testcache_size    : 5
+testcache_count   : 1
+testcache_evict   : 0
+afl_banner        : /tmp/libxml2_fuzz_noinstr_persistent
+afl_version       : ++4.33c
+target_mode       : persistent shmem_testcase deferred 
+command_line      : /aflplusplus/afl-fuzz -i /libxml2-home/seeds -o /tmp/out-15min-noinstr-perf -V 900 -- /tmp/libxml2_fuzz_noinstr_persistent

@@ -1,0 +1,6 @@
+# environment variables:
+AFL_CUSTOM_INFO_PROGRAM=/libxml2-home/libxml2_fuzz_persistent
+AFL_CUSTOM_INFO_PROGRAM_ARGV=
+AFL_CUSTOM_INFO_OUT=/tmp/out-15min-instr/default
+# command line:
+'/aflplusplus/afl-fuzz' '-i' '/libxml2-home/seeds' '-o' '/tmp/out-15min-instr' '-V' '900' '--' '/libxml2-home/libxml2_fuzz_persistent'
