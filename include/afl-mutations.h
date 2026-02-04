@@ -1760,9 +1760,11 @@ u32 choose_block_len(afl_state_t *, u32);
 inline u32 choose_block_len(afl_state_t *afl, u32 limit) {
 
   u32 min_value, max_value;
-  u32 rlim = MIN(afl->queue_cycle, (u32)3);
+  // u32 rlim = MIN(afl->queue_cycle, (u32)3);
+  u32 rlim = 3;  // PATCHED: constant, not time-dependent
 
-  if (unlikely(!afl->run_over10m)) { rlim = 1; }
+  // PATCHED: removed run_over10m check for i.i.d. mutations
+  // if (unlikely(!afl->run_over10m)) { rlim = 1; }
 
   switch (rand_below(afl, rlim)) {
 

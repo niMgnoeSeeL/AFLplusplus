@@ -746,7 +746,8 @@ void show_stats_normal(afl_state_t *afl) {
 
   /* Check if we're past the 10 minute mark. */
 
-  if (cur_ms - afl->start_time > 10 * 60 * 1000) { afl->run_over10m = 1; }
+  // PATCHED: removed run_over10m for i.i.d. mutations
+  // if (cur_ms - afl->start_time > 10 * 60 * 1000) { afl->run_over10m = 1; }
 
   /* Calculate smoothed exec speed stats. */
 
@@ -1572,7 +1573,8 @@ void show_stats_pizza(afl_state_t *afl) {
 
   /* Check if we're past the 10 minute mark. */
 
-  if (cur_ms - afl->start_time > 10 * 60 * 1000) { afl->run_over10m = 1; }
+  // PATCHED: removed run_over10m for i.i.d. mutations
+  // if (cur_ms - afl->start_time > 10 * 60 * 1000) { afl->run_over10m = 1; }
 
   /* Calculate smoothed exec speed stats. */
 
