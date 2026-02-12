@@ -1,11 +1,11 @@
 //
-// This is an example on how to use afl_custom_post_run
-// It executes custom code each time after AFL++ executes the target
+// Combined custom mutator that tracks BOTH singletons/clusters AND ground truth
+// This executes custom code each time after AFL++ executes the target
 //
-// cc -O3 -fPIC -shared -g -o custom_post_run.so -I../../include
-// custom_post_run.c cd ../.. afl-cc -o test-instr test-instr.c
-// AFL_CUSTOM_MUTATOR_LIBRARY=custom_mutators/examples/custom_post_run.so \
-//   afl-fuzz -i in -o out -- ./test-instr -f /tmp/foo
+// cc -O3 -fPIC -shared -g -o custom_post_run_efficient.so -I../../include
+// custom_post_run_efficient.c
+// AFL_CUSTOM_MUTATOR_LIBRARY=custom_mutators/examples/custom_post_run_efficient.so \
+//   afl-fuzz -i in -o out -- ./test-instr
 //
 
 #include "afl-fuzz.h"
@@ -29,7 +29,9 @@ typedef struct record {
   u32                    n_seeds;
   // total
   long unsigned int n_covered_total;
-  #ifndef IGNORE_FINDS
+  long unsigned int n_sglt_clusts_total;
+  long unsigned int n_singletons_total;
+#ifndef IGNORE_FINDS
   // reset
   long unsigned int n_covered_reset;
   long unsigned int n_sglt_clusts_reset;
@@ -47,7 +49,7 @@ typedef struct record {
 #endif
 
   // for ground truth computation
-  long unsigned int        cov_per_sample;
+  long unsigned int        cov_per_sample, cov_per_sample_unique;
   SimpleSet             *covered_cum;
   long long unsigned int n_found_new;
   bool                   check_new;
@@ -69,8 +71,16 @@ typedef struct covmanager {
   u32         n_execs;
   SimpleSet  *covered_prev;
 
-  SimpleSet  *curr_covered; // used during ground truth computation
-  long unsigned int cov_per_sample;
+  // For singleton tracking
+  setofset_t *sglt_clusts;
+  u32         n_sglt_clusts;
+  SimpleSet  *singletons;
+  SimpleSet  *curr_sglt_clust;
+
+  // For ground truth computation
+  SimpleSet  *curr_covered;
+  long unsigned int        cov_per_sample_unique;
+  long unsigned int        cov_per_sample_store, cov_per_sample_live;
 } covmanager_t;
 
 // queue_entry is defined in afl-fuzz.h
@@ -94,6 +104,15 @@ typedef struct my_mutator {
   // mean local estimator
   item2manager_t *item2man;
 #endif
+
+  u64       last_sglt_clust_update_time;  // last time we updated singleton
+                                          // clusters. Singleton clusters may be
+                                          // updated more frequently than
+                                          // records are added, as record
+                                          // addition has additional logic to
+                                          // avoid excessive data collection,
+                                          // when there no sample interval is
+                                          // set (sample_interval == 0).
 
   record_t *records;
   u32       records_len;
@@ -133,7 +152,20 @@ covmanager_t *covmanager_init(void) {
   covman->n_execs = 0;
   covman->covered_prev = (SimpleSet *)malloc(sizeof(SimpleSet));
   set_init(covman->covered_prev);
+
+  // Initialize singleton tracking
+  covman->sglt_clusts = NULL;
+  covman->n_sglt_clusts = 0;
+  covman->singletons = (SimpleSet *)malloc(sizeof(SimpleSet));
+  set_init(covman->singletons);
+  covman->curr_sglt_clust = NULL;
+
+  // Initialize ground truth tracking
   covman->curr_covered = NULL;
+  covman->cov_per_sample_unique = 0;
+  covman->cov_per_sample_store = 0;
+  covman->cov_per_sample_live = 0;
+
   return covman;
 }
 
@@ -151,6 +183,21 @@ u32 compute_covmanager_memory(covmanager_t *covman) {
   // The 'covered_prev' set
   size += set_memory(covman->covered_prev);
 
+  // Each setofset_t node plus its SimpleSet
+  setofset_t *cur = covman->sglt_clusts;
+  while (cur) {
+    size += sizeof(setofset_t);    // the list node itself
+    size += set_memory(cur->set);  // the SimpleSet
+    cur = cur->next;
+  }
+
+  // The 'singletons' set
+  size += set_memory(covman->singletons);
+
+  if (covman->curr_sglt_clust) {
+    size += set_memory(covman->curr_sglt_clust);
+  }
+
   if (covman->curr_covered) {
     size += set_memory(covman->curr_covered);
   }
@@ -161,7 +208,25 @@ u32 compute_covmanager_memory(covmanager_t *covman) {
 void reset_covmanager(covmanager_t *covman) {
   // Note. we do not reset n_execs
   set_clear(covman->covered_prev);
-  
+
+  // Reset singleton tracking
+  setofset_t *cur = covman->sglt_clusts;
+  while (cur) {
+    set_destroy(cur->set);
+    setofset_t *tmp = cur;
+    cur = cur->next;
+    free(tmp);
+  }
+  covman->sglt_clusts = NULL;
+  covman->n_sglt_clusts = 0;
+  set_clear(covman->singletons);
+
+  if (covman->curr_sglt_clust) {
+    set_destroy(covman->curr_sglt_clust);
+    covman->curr_sglt_clust = NULL;
+  }
+
+  // Reset ground truth tracking
   if (covman->curr_covered) {
     set_destroy(covman->curr_covered);
     covman->curr_covered = NULL;
@@ -170,9 +235,25 @@ void reset_covmanager(covmanager_t *covman) {
 
 void destroy_covmanager(covmanager_t *covman) {
   set_destroy(covman->covered_prev);
+
+  // Destroy singleton tracking structures
+  setofset_t *cur = covman->sglt_clusts;
+  while (cur) {
+    set_destroy(cur->set);
+    setofset_t *tmp = cur;
+    cur = cur->next;
+    free(tmp);
+  }
+  set_destroy(covman->singletons);
+  if (covman->curr_sglt_clust) {
+    set_destroy(covman->curr_sglt_clust);
+  }
+
+  // Destroy ground truth tracking structures
   if (covman->curr_covered) {
     set_destroy(covman->curr_covered);
   }
+
   free(covman);
 }
 
@@ -222,13 +303,19 @@ my_mutator_t *afl_custom_init(afl_state_t *afl, unsigned int seed) {
   data->item2man->covman_list = NULL;
 #endif
 
+  data->last_sglt_clust_update_time = get_cur_time();
   data->records = NULL;
   data->records_len = 0;
   data->force_save = false;
   data->last_record_add_time = get_cur_time();
-  data->reset_after_tmin = true;
-  data->tmin = 0;
   data->last_record_write_time = get_cur_time();
+
+  data->reset_after_tmin = false;
+  data->tmin = 0;
+  if (afl->tmin > 0) {
+    data->reset_after_tmin = true;
+    data->tmin = afl->tmin;
+  }
 
   // check if the records file exists; if so, remove it
   char *filename = (char *)alloc_printf("%s/records.csv", afl->out_dir);
@@ -242,6 +329,8 @@ my_mutator_t *afl_custom_init(afl_state_t *afl, unsigned int seed) {
 
   return data;
 }
+
+void reset_record_file(my_mutator_t *data);
 
 void reset_entire_data(my_mutator_t *data) {
   destroy_covmanager(data->covman_total);
@@ -261,10 +350,20 @@ void reset_entire_data(my_mutator_t *data) {
   data->item2man->covman_list = NULL;
 #endif
 
+  // Free all existing records and their covered_cum sets
+  record_t *cur = data->records;
+  while (cur) {
+    record_t *tmp = cur;
+    cur = cur->prev;
+    set_destroy(tmp->covered_cum);
+    free(tmp);
+  }
   data->records = NULL;
   data->records_len = 0;
   data->force_save = false;
+  data->last_sglt_clust_update_time = get_cur_time();
   data->last_record_add_time = get_cur_time();
+  reset_record_file(data);
   data->last_record_write_time = get_cur_time();
 }
 
@@ -275,30 +374,73 @@ const char *idx_to_str(u32 idx) {
 }
 
 bool update_covmanager(covmanager_t *covman, const char *key) {
-  set_add(covman->curr_covered, key); // maintain the covered set during the
-                                      // sampling period for the ground truth 
-                                      // computation. This will be reset every
-                                      // update_singleton_clusters call, where
-                                      // sampling period ends and samples are
-                                      // gathered.
+  // Add to ground truth current covered set
+  set_add(covman->curr_covered, key);
+
   bool add_new_record = false;
   if (set_contains(covman->covered_prev, key) == SET_FALSE) {
     add_new_record = true;
+    // New coverage: add to singletons and current cluster
+    set_add(covman->singletons, key);
+    set_add(covman->curr_sglt_clust, key);
+  } else {
+    // if the key was in singletons, remove it from singletons and
+    // sglt_clusts
+    if (set_contains(covman->singletons, key) == SET_TRUE) {
+      add_new_record = true;
+      set_remove(covman->singletons, key);
+      // iterate over the sglt_clusts and remove the key from the sets
+      setofset_t *cur = covman->sglt_clusts;
+      setofset_t *prev = NULL;
+      while (cur) {
+        if (set_contains(cur->set, key) == SET_TRUE) {
+          set_remove(cur->set, key);
+          if (set_length(cur->set) == 0) {
+            // Remove empty cluster
+            if (prev == NULL) {
+              covman->sglt_clusts = cur->next;
+            } else {
+              prev->next = cur->next;
+            }
+            set_destroy(cur->set);
+            setofset_t *tmp = cur;
+            cur = cur->next;
+            free(tmp);
+            covman->n_sglt_clusts--;
+          } else {
+            prev = cur;
+            cur = cur->next;
+          }
+          break;
+        } else {
+          prev = cur;
+          cur = cur->next;
+          // if cur is NULL, something is wrong
+          if (!cur) {
+            WARNF("key %s is in singletons but not in sglt_clusts\n", key);
+          }
+        }
+      }
+    }
   }
+
+  // Track coverage intensity for ground truth
+  covman->cov_per_sample_live++;
+
   return add_new_record;
 }
 
-void update_singleton_clusters(covmanager_t *covman, 
+void update_singleton_clusters(covmanager_t *covman,
                                record_t *curr_record, record_t *stop_record) {
   // each time this function is called, we have a new sample
   covman->n_samples++;
-  // For ground truth computation, we update the record's n_found_new based on
-  // what are covered until the record vs what's in covman->curr_covered
+
+  // For ground truth computation, update n_found_new for records
   if (curr_record) {
     record_t *iter_record = curr_record;
     while (iter_record) {
       if (iter_record == stop_record) { break; }
-      if (iter_record->check_new && 
+      if (iter_record->check_new &&
           set_is_subset(covman->curr_covered,
                         iter_record->covered_cum) == SET_FALSE) {
           iter_record->n_found_new++;
@@ -307,14 +449,32 @@ void update_singleton_clusters(covmanager_t *covman,
       iter_record = iter_record->prev;
     }
   }
+
+  // Add current covered to covered_prev
   for (u32 i = 0; i < covman->curr_covered->number_nodes; ++i) {
     if (covman->curr_covered->nodes[i] != NULL) {
       set_add(covman->covered_prev,
               covman->curr_covered->nodes[i]->_key);
     }
   }
-  // reset covman->curr_covered for the next sampling period
-  covman->cov_per_sample = set_length(covman->curr_covered);
+
+  // if there is new singleton cluster, add it to sglt_clusts
+  if (set_length(covman->curr_sglt_clust) > 0) {
+    setofset_t *new_sglt_clust_node = (setofset_t *)malloc(sizeof(setofset_t));
+    new_sglt_clust_node->set = covman->curr_sglt_clust;
+    new_sglt_clust_node->next = covman->sglt_clusts;
+    covman->sglt_clusts = new_sglt_clust_node;
+    covman->n_sglt_clusts++;
+    covman->curr_sglt_clust = NULL;
+  } else {
+    set_destroy(covman->curr_sglt_clust);
+    covman->curr_sglt_clust = NULL;
+  }
+
+  // Update ground truth metrics
+  covman->cov_per_sample_unique = set_length(covman->curr_covered);
+  covman->cov_per_sample_store = covman->cov_per_sample_live;
+  covman->cov_per_sample_live = 0;
   set_destroy(covman->curr_covered);
   covman->curr_covered = NULL;
 }
@@ -369,25 +529,6 @@ void compute_alias_weights(double *alias_probability, u32 *alias_table, u32 N,
   }
   // assert(fabs(sum - 1.0) < 1e-6);
   if (fabs(sum - 1.0) >= 0.2) {
-    // for debugging purpose
-    // print the _alias_probability
-    for (u32 i = 0; i < N; i++) {
-      // printf("SMDEBUG::compute_alias_weights::_alias_probability[%d] = %f\n",
-      // i,
-      //        _alias_probability[i]);
-    }
-    // print the _alias_table
-    for (u32 i = 0; i < N; i++) {
-      // printf("SMDEBUG::compute_alias_weights::_alias_table[%d] = %d\n", i,
-      //        _alias_table[i]);
-    }
-    // print the weights
-    for (u32 i = 0; i < N; i++) {
-      // printf("SMDEBUG::compute_alias_weights::weight[%d] = %f\n", i,
-      // weight[i]);
-    }
-    // print the sum
-    // printf("SMDEBUG::compute_alias_weights::sum = %f\n", sum);
     FATAL("Error: sum of weights is not 1.0");
   }
   free(_alias_probability);
@@ -462,7 +603,7 @@ void update_record(my_mutator_t *data, bool is_end);
 
 void afl_custom_post_run(my_mutator_t *data) {
   if (data->reset_after_tmin &&
-      get_cur_time() - data->afl->start_time > data->tmin) {
+      get_cur_time() - data->afl->start_time > data->tmin * 60 * 1000) {
     reset_entire_data(data);
     data->reset_after_tmin = false;
   }
@@ -485,7 +626,7 @@ void afl_custom_post_run(my_mutator_t *data) {
     reset_covmanager(data->covman_reset);
   }
 
-  // find the covemanager for the current item
+  // find the covmanager for the current item
   queue_entry_t *queue_cur = data->afl->queue_cur;
   // check if the mother is NULL, then mid = queue_cur->id
   // otherwise, mid = queue_cur->mother->id
@@ -498,11 +639,35 @@ void afl_custom_post_run(my_mutator_t *data) {
   }
   covman_curr->n_execs++;
 #endif
+
+  // Initialize current tracking sets if needed
   if (!data->covman_total->curr_covered) {
     data->covman_total->curr_covered = (SimpleSet *)malloc(sizeof(SimpleSet));
     set_init(data->covman_total->curr_covered);
   }
-  
+  if (!data->covman_total->curr_sglt_clust) {
+    data->covman_total->curr_sglt_clust = (SimpleSet *)malloc(sizeof(SimpleSet));
+    set_init(data->covman_total->curr_sglt_clust);
+  }
+#ifndef IGNORE_FINDS
+  if (!data->covman_reset->curr_covered) {
+    data->covman_reset->curr_covered = (SimpleSet *)malloc(sizeof(SimpleSet));
+    set_init(data->covman_reset->curr_covered);
+  }
+  if (!data->covman_reset->curr_sglt_clust) {
+    data->covman_reset->curr_sglt_clust = (SimpleSet *)malloc(sizeof(SimpleSet));
+    set_init(data->covman_reset->curr_sglt_clust);
+  }
+  if (!covman_curr->curr_covered) {
+    covman_curr->curr_covered = (SimpleSet *)malloc(sizeof(SimpleSet));
+    set_init(covman_curr->curr_covered);
+  }
+  if (!covman_curr->curr_sglt_clust) {
+    covman_curr->curr_sglt_clust = (SimpleSet *)malloc(sizeof(SimpleSet));
+    set_init(covman_curr->curr_sglt_clust);
+  }
+#endif
+
   for (i = 0; i < data->afl->fsrv.map_size; i++) {
     // if the trace bit is nonzero, then this has been covered in this run
     if (data->afl->fsrv.trace_bits[i]) {
@@ -517,16 +682,16 @@ void afl_custom_post_run(my_mutator_t *data) {
 #endif
     }
   }
+
   // if per execution sampling, or per interval sampling and the sampling
   // interval came, update singleton clusters
   if (data->afl->sample_interval == 0 || (
-        get_cur_time() - data->last_record_add_time >=
+        get_cur_time() - data->last_sglt_clust_update_time >=
         data->afl->sample_interval * 1000)) {
-    // flag up the check_new for all records. this recording for the missing 
-    // mass analysis only done until the number of executions is doubled.
+    // flag up the check_new for all records for ground truth analysis
     record_t *curr_record = data->records;
     record_t *iter_record = curr_record;
-    while (iter_record && iter_record->execs * 2 
+    while (iter_record && iter_record->execs * 2
            >= data->covman_total->n_execs) {
       iter_record->check_new = true;
       iter_record = iter_record->prev;
@@ -537,6 +702,7 @@ void afl_custom_post_run(my_mutator_t *data) {
     update_singleton_clusters(data->covman_reset, curr_record, stop_record);
     update_singleton_clusters(covman_curr, curr_record, stop_record);
 #endif
+    data->last_sglt_clust_update_time = get_cur_time();
   }
 
   // add_new_record: determine whether to add a new record object
@@ -547,10 +713,14 @@ void afl_custom_post_run(my_mutator_t *data) {
     add_new_record = (get_cur_time() - data->last_record_add_time
                       >= data->afl->sample_interval * 1000);
   } else {
-    // In case of per execution, only add record if 
+    // In case of per execution, only add record if
     // time_so_far > previous record time * 1.05
     add_new_record =
         (!data->records) || (time_so_far * 100 >= data->records->time_ms * 105);
+  }
+  // restrict the number of records for efficiency
+  if (data->records_len >= 10 && add_new_record) {
+    add_new_record = false;
   }
 
 #ifndef IGNORE_FINDS
@@ -561,13 +731,16 @@ void afl_custom_post_run(my_mutator_t *data) {
 #endif
   if (add_new_record || data->force_save) {
     record_t *new_record = (record_t *)malloc(sizeof(record_t));
-    new_record->time_ms = get_cur_time() - data->afl->start_time;
+    new_record->time_ms = (
+      get_cur_time() - data->afl->start_time - data->tmin * 60 * 1000);
     if (!data->reset_after_tmin) { new_record->time_ms -= data->tmin; }
     new_record->samples = data->covman_total->n_samples;
     new_record->execs = data->covman_total->n_execs;
     new_record->n_seeds = data->afl->queued_items;
 
     new_record->n_covered_total = set_length(data->covman_total->covered_prev);
+    new_record->n_sglt_clusts_total = data->covman_total->n_sglt_clusts;
+    new_record->n_singletons_total = set_length(data->covman_total->singletons);
 #ifndef IGNORE_FINDS
     new_record->n_covered_reset = set_length(data->covman_reset->covered_prev);
     new_record->n_sglt_clusts_reset = data->covman_reset->n_sglt_clusts;
@@ -595,6 +768,8 @@ void afl_custom_post_run(my_mutator_t *data) {
 
     new_record->n_items = data->item2man->n_items;
 #endif
+
+    // Ground truth: store cumulative coverage
     SimpleSet *covered_so_far = (SimpleSet *)malloc(sizeof(SimpleSet));
     set_init(covered_so_far);
     for (uint64_t i = 0; i < data->covman_total->covered_prev->number_nodes;
@@ -606,8 +781,12 @@ void afl_custom_post_run(my_mutator_t *data) {
     }
     new_record->covered_cum = covered_so_far;
     new_record->n_found_new = 0;
-    new_record->cov_per_sample = data->covman_total->cov_per_sample;
+    new_record->cov_per_sample_unique = \
+      data->covman_total->cov_per_sample_unique;
+    new_record->cov_per_sample = data->covman_total->cov_per_sample_store;
+    data->covman_total->cov_per_sample_store = 0;
 
+    new_record->is_update = is_update;
     new_record->prev = data->records;
     new_record->next = NULL;
 
@@ -640,8 +819,9 @@ void afl_custom_post_run(my_mutator_t *data) {
     }
   }
   else {
-    // In case of per interval sampling, write record per interval
-    if (add_new_record) {
+    // In case of per interval sampling, write record per interval,
+    // or if the number of records reach the limit
+    if (add_new_record || data->records_len >= 10) {
       update_record(data, false); // write records to file
     }
   }
@@ -649,23 +829,6 @@ void afl_custom_post_run(my_mutator_t *data) {
 #ifndef IGNORE_FINDS
   free(weight);
 #endif
-  /* Uncomment the following lines to print the debug information:
-  u32 total_memory = 0;
-  total_memory += compute_covmanager_memory(data->covman_total);
-  total_memory += compute_covmanager_memory(data->covman_reset);
-  for (u32 i = 0; i < data->item2man->n_items; ++i) {
-    total_memory +=
-    compute_covmanager_memory(data->item2man->covman_list[i]);
-  }
-  total_memory += compute_record_memory(data->records);
-  float mgb = (float)total_memory / 1024 / 1024 / 1024;
-  printf("SMDEBUG::afl_custom_post_run::BitIter = %llus, AddRecord = %llus,
-  WriteRecord = %llus, Total = %llus, len_records = %u, total_memory =
-  %fGB\n",
-         debug_time_BitIter / 1000, debug_time_AddRecord / 1000,
-         debug_time_WriteRecord / 1000, debug_time_total / 1000,
-         data->records_len, mgb);
-  */
   return;
 }
 
@@ -673,20 +836,21 @@ void write_header(FILE *f, bool for_done_records) {
   // header for the records file
 #ifdef IGNORE_FINDS
   fprintf(f,
-          "time, #samples, #covpersmp, #execs, #seeds, "
-          "#covered, #foundnew, empirical, done");
+          "time,#samples,#covpersmp,#covperuniqsmp,#execs,#seeds,"
+          "#covered,#singletons,#sglt_clusts,"
+          "#foundnew,empirical,done");
 #else
   fprintf(f,
-          "time, #samples, #covpersmp, #execs, #seeds, #items, "
-          "#covered, #singletons, #sglt_clusts, "
-          "#coveredR, #singletonsR, #sglt_clustsR, "
-          "ML_sglt, ML_sglt_clusts, "
-          "remainW, lesti_mean, lesti_min, lesti_min_id, lesti_max, "
-          "lesti_max_id, "
-          "#foundnew, done");
+          "time,#samples,#covpersmp,#covperuniqsmp,#execs,#seeds,#items,"
+          "#covered,#singletons,#sglt_clusts,"
+          "#coveredR,#singletonsR,#sglt_clustsR,"
+          "ML_sglt,ML_sglt_clusts,"
+          "remainW,lesti_mean,lesti_min,lesti_min_id,lesti_max,"
+          "lesti_max_id,"
+          "#foundnew,empirical,done");
 #endif
   if (for_done_records) {
-    fprintf(f, ", update?\n");
+    fprintf(f, ",update?\n");
   } else {
     fprintf(f, "\n");
   }
@@ -697,22 +861,26 @@ void write_row(FILE *f, my_mutator_t *data, record_t *cur,
   // write a row to the records file
 #ifdef IGNORE_FINDS
   fprintf(f,
-          "%llu, %llu, %lu, %llu, %u, "
-          "%lu, %llu, %e, %s",
-          cur->time_ms, cur->samples, cur->cov_per_sample, cur->execs, 
+          "%llu,%llu,%lu,%lu,%llu,%u,"
+          "%lu,%lu,%lu,"
+          "%llu,%e,%s",
+          cur->time_ms, cur->samples, cur->cov_per_sample,
+          cur->cov_per_sample_unique, cur->execs,
           cur->n_seeds, cur->n_covered_total,
+          cur->n_singletons_total, cur->n_sglt_clusts_total,
           cur->n_found_new,
           cur->n_found_new / (float)(cur->samples),
           cur->execs * 2 < data->covman_total->n_execs ? "true" : "false");
 #else
   fprintf(f,
-          "%llu, %llu, %lu, %llu, %u, %u, "
-          "%lu, %lu, %lu, "
-          "%lu, %lu, %lu, "
-          "%f, %f, "
-          "%f, %f, %f, %u, %f, %u, "
-          "%llu, %s",
-          cur->time_ms, cur->samples, cur->cov_per_sample, cur->execs, 
+          "%llu,%llu,%lu,%lu,%llu,%u,%u,"
+          "%lu,%lu,%lu,"
+          "%lu,%lu,%lu,"
+          "%f,%f,"
+          "%f,%f,%f,%u,%f,%u,"
+          "%llu,%e,%s",
+          cur->time_ms, cur->samples, cur->cov_per_sample,
+          cur->cov_per_sample_unique, cur->execs,
           cur->n_seeds, cur->n_items,
           cur->n_covered_total, cur->n_singletons_total,
           cur->n_sglt_clusts_total, cur->n_covered_reset,
@@ -720,13 +888,28 @@ void write_row(FILE *f, my_mutator_t *data, record_t *cur,
           cur->n_ml_sglt_clusts, cur->remain_weight, cur->lesti_mean,
           cur->lesti_min, cur->lesti_min_id, cur->lesti_max, cur->lesti_max_id,
           cur->n_found_new,
+          cur->n_found_new / (float)(cur->samples),
           cur->samples * 2 < data->covman_total->n_samples ? "true" : "false");
 #endif
   if (for_done_records) {
-    fprintf(f, ", %s\n", cur->is_update ? "true" : "false");
+    fprintf(f, ",%s\n", cur->is_update ? "true" : "false");
   } else {
     fprintf(f, "\n");
   }
+}
+
+void reset_record_file(my_mutator_t *data) {
+  // filename: afl->out_dir/records.csv
+  char *filename = (char *)alloc_printf("%s/records.csv", data->afl->out_dir);
+  FILE *f = fopen(filename, "w");
+  if (!f) {
+    perror("fopen");
+    return;
+  }
+  // write the header
+  write_header(f, true);
+  fclose(f);
+  ck_free(filename);
 }
 
 /* Write records to a file */
@@ -830,7 +1013,7 @@ void afl_custom_deinit(my_mutator_t *data) {
   while (cur) {
     record_t *tmp = cur;
     cur = cur->next;
-    // set_destroy(tmp->covered);
+    set_destroy(tmp->covered_cum);
     free(tmp);
   }
   destroy_covmanager(data->covman_total);
